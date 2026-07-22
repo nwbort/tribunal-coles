@@ -34,7 +34,10 @@ jobs:
         if ! command -v google-chrome >/dev/null 2>&1; then
           sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
         fi
-        google-chrome --version || chromium --version || chromium-browser --version || true
+        CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)
+        echo "Resolved CHROME_PATH=$CHROME_PATH"
+        "$CHROME_PATH" --version || true
+        echo "CHROME_PATH=$CHROME_PATH" >> "$GITHUB_ENV"
     - name: Run the scraper
       run: |
         ./scrape.sh

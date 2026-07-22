@@ -12,7 +12,7 @@ If OUTPUT_FILE is omitted it is derived from the URL the same way download.sh
 did (host without www, slashes -> hyphens, .html suffix).
 """
 
-import asyncio
+import os
 import re
 import sys
 import time
@@ -73,14 +73,23 @@ async def try_click_turnstile(tab):
 
 async def scrape(url: str, output: str) -> int:
     print(f"Launching browser for {url}", flush=True)
-    browser = await uc.start(
+    start_kwargs = dict(
         headless=False,
+        # nodriver refuses to launch Chrome as root (which the CI runner is)
+        # unless sandbox is explicitly disabled; this also injects --no-sandbox.
+        sandbox=False,
         browser_args=[
-            "--no-sandbox",
             "--disable-dev-shm-usage",
+            "--disable-gpu",
             "--window-size=1920,1080",
         ],
     )
+    chrome_path = os.environ.get("CHROME_PATH")
+    if chrome_path:
+        start_kwargs["browser_executable_path"] = chrome_path
+        print(f"Using Chrome at {chrome_path}", flush=True)
+
+    browser = await uc.start(**start_kwargs)
 
     try:
         tab = await browser.get(url)
