@@ -17,40 +17,27 @@ jobs:
     if: ${{ !github.event.repository.is_template }}
     steps:
     - uses: actions/checkout@v4
-    - name: Create scrape.sh if it doesn't exist
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.13"
+        cache: "pip"
+    - name: Install dependencies
       run: |
-        if [ ! -f "scrape.sh" ]; then
-          echo '#!/bin/bash' > scrape.sh
-          if [[ "$REPO_DESC" == http://* ]] || [[ "$REPO_DESC" == https://* ]]; then
-            echo "./download.sh '$REPO_DESC'" >> scrape.sh
-          else
-            echo "# ./download.sh 'https://www.example.com/'" >> scrape.sh
-          fi
-          chmod +x scrape.sh
-          echo "Created scrape.sh"
-          # And replace README.md
-          echo -e "# Scheduled scraper\n\nFor $REPO_DESC" > README.md 
+        pip install -r requirements.txt
+    - name: Install Chrome and Xvfb
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xvfb
+        # google-chrome-stable is normally pre-installed on ubuntu-latest; make
+        # sure it (or chromium) is present for nodriver to drive.
+        if ! command -v google-chrome >/dev/null 2>&1; then
+          sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
         fi
-      env:
-        REPO_DESC: ${{ github.event.repository.description }}
-    # Uncomment to use Python:
-    # - name: Set up Python 3.13
-    #   uses: actions/setup-python@v5
-    #   with:
-    #     python-version: "3.13"
-    #     cache: "pip"
-    # - name: Install dependencies
-    #   run: |
-    #     pip install -r requirements.txt
-    # Uncomment to use Playwright via shot-scraper (put shot-scraper in requirements.txt):
-    # - name: Cache Playwright browsers
-    #   uses: actions/cache@v4
-    #   with:
-    #     path: ~/.cache/ms-playwright/
-    #     key: ${{ runner.os }}-browsers
-    # - name: Install Playwright dependencies
-    #   run: |
-    #     shot-scraper install
+        CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)
+        echo "Resolved CHROME_PATH=$CHROME_PATH"
+        "$CHROME_PATH" --version || true
+        echo "CHROME_PATH=$CHROME_PATH" >> "$GITHUB_ENV"
     - name: Run the scraper
       run: |
         ./scrape.sh
