@@ -29,6 +29,14 @@ import urllib.request
 
 import nodriver as uc
 
+from parse_documents import parse_documents
+
+# Where the linked documents get downloaded and where the parsed table is
+# written. url_gh in documents.json is relative to the repo root, e.g.
+# "/documents/Directions.pdf".
+DOCS_DIR = "documents"
+DOCS_JSON = "documents.json"
+
 # Markers that indicate we're still looking at the Cloudflare challenge rather
 # than the real page.
 CHALLENGE_MARKERS = (
@@ -158,6 +166,61 @@ async def try_click_turnstile(tab):
     return False
 
 
+async def download_documents(browser, tab, documents, page_url: str) -> None:
+    """Download each linked document into DOCS_DIR, reusing the browser's
+    Cloudflare cookies + user-agent so the requests aren't bounced back to the
+    challenge. Files that already exist are left alone (the asset URLs are
+    immutable), and anything that comes back looking like a challenge page is
+    skipped rather than saved with a misleading extension."""
+    if not documents:
+        print("No documents to download.", flush=True)
+        return
+
+    os.makedirs(DOCS_DIR, exist_ok=True)
+
+    try:
+        cookies = await browser.cookies.get_all()
+    except Exception as e:
+        print(f"  could not read cookies: {e}", flush=True)
+        cookies = []
+    cookie_header = "; ".join(
+        f"{c.name}={c.value}" for c in cookies if getattr(c, "name", None)
+    )
+
+    try:
+        user_agent = await tab.evaluate("navigator.userAgent")
+    except Exception:
+        user_agent = "Mozilla/5.0"
+
+    headers = {"User-Agent": user_agent, "Referer": page_url}
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+
+    for doc in documents:
+        url = doc["url"]
+        filename = doc["url_gh"].rsplit("/", 1)[-1]
+        dest = os.path.join(DOCS_DIR, filename)
+        if os.path.exists(dest):
+            print(f"  skip existing {dest}", flush=True)
+            continue
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=60) as r:
+                data = r.read()
+        except Exception as e:
+            print(f"  FAILED to download {url}: {e}", flush=True)
+            continue
+        if b"Just a moment" in data[:2048] or b"challenge-platform" in data[:8192]:
+            print(
+                f"  WARNING: {url} returned a Cloudflare challenge, not saving",
+                flush=True,
+            )
+            continue
+        with open(dest, "wb") as f:
+            f.write(data)
+        print(f"  downloaded {dest} ({len(data)} bytes)", flush=True)
+
+
 async def scrape(url: str, output: str) -> int:
     chrome_path = find_chrome()
     port = free_port()
@@ -220,6 +283,17 @@ async def scrape(url: str, output: str) -> int:
         with open(output, "w", encoding="utf-8") as f:
             f.write(html)
         print(f"Saved {len(html)} bytes to {output} (cleared={cleared})", flush=True)
+
+        if cleared:
+            documents = parse_documents(html, docs_dir=DOCS_DIR)
+            print(f"Parsed {len(documents)} documents from the table", flush=True)
+            await download_documents(browser, tab, documents, url)
+            with open(DOCS_JSON, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"documents": documents}, f, indent=2, ensure_ascii=False
+                )
+                f.write("\n")
+            print(f"Wrote {len(documents)} documents to {DOCS_JSON}", flush=True)
 
         return 0 if cleared else 2
     finally:
