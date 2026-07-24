@@ -5,16 +5,15 @@ Browser-based scraper that gets past Cloudflare's "managed challenge".
 Plain curl only ever sees the "Just a moment..." interstitial because the
 challenge requires a real browser to execute JavaScript (and sometimes click a
 Turnstile checkbox). We drive a real Chrome via nodriver, wait for the
-challenge to clear, and then save the resulting HTML.
+challenge to clear, then parse the filings table into documents.json and
+download the linked documents into documents/.
 
 We launch Chrome ourselves (with a remote-debugging port) and wait until the
 DevTools endpoint is actually ready before attaching nodriver. nodriver's own
 launcher only waits ~2.5s for the port, which loses a race against Chrome's
 ~3s cold start on CI runners, so we manage the process and the readiness wait.
 
-Usage: scrape.py URL [OUTPUT_FILE]
-If OUTPUT_FILE is omitted it is derived from the URL the same way download.sh
-did (host without www, slashes -> hyphens, .html suffix).
+Usage: scrape.py URL
 """
 
 import asyncio
@@ -69,16 +68,6 @@ CHROME_ARGS = [
     "--window-size=1920,1080",
     "--no-sandbox",  # CI runs as root
 ]
-
-
-def derive_filename(url: str) -> str:
-    name = re.sub(r"^https?://", "", url)
-    name = re.sub(r"^www\.", "", name)
-    name = name.rstrip("/")
-    name = name.replace("/", "-")
-    if not name:
-        name = "index"
-    return f"{name}.html"
 
 
 def looks_like_challenge(html: str) -> bool:
@@ -221,7 +210,7 @@ async def download_documents(browser, tab, documents, page_url: str) -> None:
         print(f"  downloaded {dest} ({len(data)} bytes)", flush=True)
 
 
-async def scrape(url: str, output: str) -> int:
+async def scrape(url: str) -> int:
     chrome_path = find_chrome()
     port = free_port()
     user_data_dir = tempfile.mkdtemp(prefix="cf-scrape-")
@@ -270,32 +259,25 @@ async def scrape(url: str, output: str) -> int:
 
         if not cleared:
             print(
-                "WARNING: challenge did not clear within timeout; saving whatever "
-                "we have for diagnosis.",
+                "WARNING: challenge did not clear within timeout; skipping parse.",
                 flush=True,
             )
+            return 2
 
         try:
             html = await tab.get_content()
         except Exception:
             pass
 
-        with open(output, "w", encoding="utf-8") as f:
-            f.write(html)
-        print(f"Saved {len(html)} bytes to {output} (cleared={cleared})", flush=True)
+        documents = parse_documents(html, docs_dir=DOCS_DIR)
+        print(f"Parsed {len(documents)} documents from the table", flush=True)
+        await download_documents(browser, tab, documents, url)
+        with open(DOCS_JSON, "w", encoding="utf-8") as f:
+            json.dump({"documents": documents}, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        print(f"Wrote {len(documents)} documents to {DOCS_JSON}", flush=True)
 
-        if cleared:
-            documents = parse_documents(html, docs_dir=DOCS_DIR)
-            print(f"Parsed {len(documents)} documents from the table", flush=True)
-            await download_documents(browser, tab, documents, url)
-            with open(DOCS_JSON, "w", encoding="utf-8") as f:
-                json.dump(
-                    {"documents": documents}, f, indent=2, ensure_ascii=False
-                )
-                f.write("\n")
-            print(f"Wrote {len(documents)} documents to {DOCS_JSON}", flush=True)
-
-        return 0 if cleared else 2
+        return 0
     finally:
         try:
             browser.stop()
@@ -309,11 +291,10 @@ async def scrape(url: str, output: str) -> int:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("Usage: scrape.py URL [OUTPUT_FILE]", file=sys.stderr)
+        print("Usage: scrape.py URL", file=sys.stderr)
         return 1
     url = sys.argv[1]
-    output = sys.argv[2] if len(sys.argv) > 2 else derive_filename(url)
-    return uc.loop().run_until_complete(scrape(url, output))
+    return uc.loop().run_until_complete(scrape(url))
 
 
 if __name__ == "__main__":

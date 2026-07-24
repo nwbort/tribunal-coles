@@ -5,9 +5,8 @@ For https://www.competitiontribunal.gov.au/current-matters/act-1-of-2026
 The scraper drives a real Chrome (via nodriver) to get past Cloudflare's
 managed challenge, then:
 
-1. saves the rendered page HTML,
-2. parses the filings table into [`documents.json`](documents.json), and
-3. downloads each linked document into [`documents/`](documents/).
+1. parses the filings table into [`documents.json`](documents.json), and
+2. downloads each linked document into [`documents/`](documents/).
 
 ## Output
 
@@ -35,7 +34,7 @@ repo-relative `url_gh` pointing at the downloaded copy:
 ./scrape.sh        # scrape + parse + download, as run in CI
 ```
 
-You can re-parse an already-saved HTML file without a browser:
+To parse a saved HTML file without a browser (e.g. for debugging):
 
 ```bash
 python parse_documents.py page.html            # prints the JSON
